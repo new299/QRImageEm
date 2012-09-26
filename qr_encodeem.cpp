@@ -5,10 +5,67 @@
 #include <algorithm>
 #include "qr_encodeem.h"
 #include "qr_utils.h"
+#include <iostream>
+
+using namespace std;
 
 #define MAX_INPUTDATA  3096 // maximum input data size
 #define MAX_QRCODESIZE 4096 // (177*177)/8
-/*
+
+#define MAX_CODEBLOCK   153 // ブロックデータコードワード数最大値(ＲＳコードワードを含む)
+#define MAX_MODULESIZE    177 // 一辺モジュール数最大値
+
+bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *m_byDataCodeWord,int *outputdata_len,int ncLength, int nVerGroup);
+int qr_encode_with_version(int nVersion,int level,const uint8_t* lpsSource, int ncLength,uint8_t *outputdata,int *outputdata_len);
+int SetBitStream(uint8_t *codestream, int nIndex, uint16_t wData, int ncData);
+void GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRSCodeWord);
+void SetFinderPattern(uint8_t *image,int width,int x, int y);
+void FormatModule(uint8_t *image,int width,uint8_t *input_data,int input_data_len,int m_nMaskingNo,int version,int level);
+void SetFunctionModule(uint8_t *image,int width,int version);
+void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size);
+void SetMaskingPattern(uint8_t *image,int width,int nPatternNo);
+void SetFormatInfoPattern(uint8_t *image,int width,int nPatternNo,int level);
+void SetVersionPattern(uint8_t *image,int width);
+void SetAlignmentPattern(uint8_t *image,int width, int x, int y);
+void SetVersionPattern(uint8_t *image,int width,int version);
+
+void qr_setmodule(uint8_t *image,int width,int x,int y,int value) {
+  int bitpos = ((y*width)+x);
+
+  int byte = bitpos/8;
+  int bit  = bitpos%8;
+
+  if(value != 0) image[byte] = image[byte] | (1<<bit);
+            else image[byte] = image[byte] & (~(1<<bit));
+}
+
+int qr_getmodule(uint8_t *outputdata,int width,int x,int y) {
+
+  int bitpos = ((y*width)+x);
+
+  int byte = bitpos/8;
+  int bit  = bitpos%8;
+
+ // cout << "   " << byte << " " << bit << "   "<< endl;
+  if(outputdata[byte] & (1<<bit)) {return 1;}
+                            else {return 0;}
+}
+
+void qr_dumpimage(uint8_t *image,int width) {
+ cout << endl;
+ cout << endl;
+ cout << endl;
+  for(int y=0;y<width;y++) {
+    for(int x=0;x<width;x++) {
+      int i = qr_getmodule(image,width,x,y);
+      if(i != 0) {printf("█");}
+            else {printf(" ");}
+    }
+    printf("\n");
+  }
+
+}
+
 // qr_encode_data
 // 用  途：データエンコード
 // 引  数：誤り訂正レベル、型番(0=自動)、型番自動拡張フラグ、マスキング番号(-1=自動)、エンコードデータ、エンコードデータ長
@@ -18,11 +75,19 @@
 // nMaskingNo: Something to do with data masking (see wikipedia)
 // lpsSource : Source data
 // ncSource  : Source data length, if 0 then assume NULL terminated.
-bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, const uint8_t * lpsSource, int ncSource) {
+bool qr_encode_data(int nLevel, int nVersion,bool bAutoExtent, int nMaskingNo, const uint8_t * lpsSource, int ncSource,uint8_t *outputdata,int *outputdata_len,int *width) {
 	int i, j;
+  
+//  uint8_t *outputdata = m_byDataCodeWord;
+  
+//  int &m_ncDataCodeWordBit = *outputdata_len;
 
-	m_nLevel = nLevel;
-	m_nMaskingNo = nMaskingNo;
+  uint8_t m_byDataCodeWord[MAX_INPUTDATA];
+  int     m_ncDataCodeWordBit;
+
+
+//	m_nLevel = nLevel;
+	int m_nMaskingNo = nMaskingNo;
 
 	// データ長が指定されていない場合は lstrlen によって取得
 	int ncLength = ncSource > 0 ? ncSource : strlen((char *) lpsSource);
@@ -33,11 +98,13 @@ bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, 
 
   // Version Check
 	// バージョン(型番)チェック
-	int nEncodeVersion = GetEncodeVersion(nVersion, lpsSource, ncLength);
+	//int nEncodeVersion = GetEncodeVersion(nVersion, lpsSource, ncLength);
+  int nEncodeVersion = qr_encode_with_version(nVersion,nLevel,lpsSource,ncLength,m_byDataCodeWord,&m_ncDataCodeWordBit);
 
 	if (nEncodeVersion == 0)
 		return false; // 容量オーバー
 
+  int m_nVersion;
 	if (nVersion == 0)
 	{
 		// 型番自動
@@ -65,7 +132,7 @@ bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, 
 	int ncTerminater = std::min(4, (ncDataCodeWord * 8) - m_ncDataCodeWordBit);
 
 	if (ncTerminater > 0)
-		m_ncDataCodeWordBit = SetBitStream(m_ncDataCodeWordBit, 0, ncTerminater);
+		m_ncDataCodeWordBit = SetBitStream(m_byDataCodeWord,m_ncDataCodeWordBit, 0, ncTerminater);
 
 	// パディングコード"11101100, 00010001"付加
 	uint8_t byPaddingCode = 0xec;
@@ -78,6 +145,9 @@ bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, 
 	}
 
 	// 総コードワード算出エリアクリア
+  int m_ncAllCodeWord; // 総コードワード数(ＲＳ誤り訂正データを含む)
+  uint8_t m_byAllCodeWord[MAX_INPUTDATA]; // 総コードワード算出エリア
+
 	m_ncAllCodeWord = QR_VersionInfo[m_nVersion].ncAllCodeWord;
   memset(m_byAllCodeWord,0,m_ncAllCodeWord);
 
@@ -133,8 +203,10 @@ bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, 
 	nDataCwIndex = 0;
 	nBlockNo = 0;
 
+  uint8_t m_byRSWork[MAX_CODEBLOCK]; // ＲＳコードワード算出ワーク
 	for (i = 0; i < ncBlock1; ++i)
 	{
+
 		memset(m_byRSWork,0,sizeof(m_byRSWork));
 
 		memmove(m_byRSWork, m_byDataCodeWord + nDataCwIndex, ncDataCw1);
@@ -169,27 +241,35 @@ bool qr_encode_data(int nLevel, int nVersion, bool bAutoExtent, int nMaskingNo, 
 		++nBlockNo;
 	}
 
-	m_nSymbolSize = m_nVersion * 4 + 17;
+	*width = m_nVersion * 4 + 17;
+
+
+  // Up until here we've just been reorganising the input data. We now start drawing the QRCode image.
 
 	// モジュール配置
-	FormatModule();
+	FormatModule(outputdata,*width,m_byAllCodeWord,m_ncAllCodeWord,nMaskingNo,m_nVersion,nLevel);
 
 	return true;
 }
 
 
+// GetEncodeVersion
 // qr_encode_with_version, this does the basic encoding, with a specified version (if possible)
 // 用  途：エンコード時バージョン(型番)取得
 // 引  数：調査開始バージョン、エンコードデータ、エンコードデータ長
 // 戻り値：バージョン番号（容量オーバー時=0）
-int qr_encode_with_version(int nVersion, const uint8_t* lpsSource, int ncLength) {
+int qr_encode_with_version(int nVersion,int level,const uint8_t* lpsSource, int ncLength,uint8_t *outputdata,int *outputdata_len) {
+
+  int &m_ncDataCodeWordBit = *outputdata_len;
+  int m_nLevel = level;
+
 	int nVerGroup = nVersion >= 27 ? QR_VRESION_L : (nVersion >= 10 ? QR_VRESION_M : QR_VRESION_S);
 	int i, j;
 
   // try different versions in order?
 	for (i = nVerGroup; i <= QR_VRESION_L; ++i)
 	{
-		if (EncodeSourceData(lpsSource, ncLength, i))
+		if (qr_encode_source_data(lpsSource,outputdata,outputdata_len, ncLength, i))
 		{
 			if (i == QR_VRESION_S)
 			{
@@ -220,7 +300,7 @@ int qr_encode_with_version(int nVersion, const uint8_t* lpsSource, int ncLength)
 
 	return 0;
 }
-*/
+
 
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode::SetBitStream
@@ -255,16 +335,17 @@ int SetBitStream(uint8_t *codestream, int nIndex, uint16_t wData, int ncData) {
 // 戻り値：エンコード成功時=true
 
 // This actually does the main data encoding.
-bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLength, int nVerGroup) {
+bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *m_byDataCodeWord,int *outputdata_len,int ncLength, int nVerGroup) {
+  int &m_ncDataCodeWordBit = *outputdata_len; // データコードワードビット長 (data code bit)
 
   int32_t m_nBlockLength[MAX_INPUTDATA];
-  uint8_t m_byBlockMode[MAX_INPUTDATA];
-	int m_ncDataCodeWordBit; // データコードワードビット長
-	uint8_t m_byDataCodeWord[MAX_INPUTDATA]; // 入力データエンコードエリア
+  uint8_t m_byBlockMode [MAX_INPUTDATA];
+//	uint8_t m_byDataCodeWord[MAX_INPUTDATA]; // 入力データエンコードエリア data encode area
 
 	int m_ncDataBlock;
 
 	memset(m_nBlockLength,0,sizeof(m_nBlockLength));
+	memset(m_byBlockMode  ,5,sizeof(m_byBlockMode));
 
 	int i, j;
 
@@ -281,12 +362,11 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLe
 		else
 			byMode = QR_MODE_8BIT;
 
-		if (i == 0)
-			m_byBlockMode[0] = byMode;
-
+		if (i == 0) { m_byBlockMode[0] = byMode; }
+ 
 		if (m_byBlockMode[m_ncDataBlock] != byMode)
 			m_byBlockMode[++m_ncDataBlock] = byMode;
-
+ 
 		++m_nBlockLength[m_ncDataBlock];
 
 		if (byMode == QR_MODE_KANJI)
@@ -298,6 +378,8 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLe
 	}
 
 	++m_ncDataBlock;
+  cout << "m_ncDataBlock is: " << m_ncDataBlock << endl;
+
 
 	/////////////////////////////////////////////////////////////////////////
 	// 隣接する英数字モードブロックと数字モードブロックの並びをを条件により結合
@@ -306,6 +388,7 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLe
 
 	int nBlock = 0;
 
+  cout << "m_ncDataBlock: " << m_ncDataBlock << endl;
 	while (nBlock < m_ncDataBlock - 1)
 	{
 		int ncJoinFront, ncJoinBehind; // 前後８ビットバイトモードブロックと結合した場合のビット長
@@ -516,17 +599,19 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLe
 		++nBlock; // 次ブロックを調査
 	}
 
-	/////////////////////////////////////////////////////////////////////////
+
+  // actual bit encoding happens here.
 	// ビット配列化
 	int ncComplete = 0; // 処理済データカウンタ
 	uint16_t wBinCode;
 
 	m_ncDataCodeWordBit = 0; // ビット単位処理カウンタ
 
-  for(int n=0;n<MAX_INPUTDATA;n++) m_nBlockLength[n]=0;
-
+  for(int n=0;n<MAX_INPUTDATA;n++) m_byDataCodeWord[n]=0;
+  
 	for (i = 0; i < m_ncDataBlock && m_ncDataCodeWordBit != -1; ++i)
 	{
+    cout << "in this loop" << endl;
 		if (m_byBlockMode[i] == QR_MODE_NUMERAL)
 		{
 			/////////////////////////////////////////////////////////////////
@@ -652,16 +737,13 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *outputdata,int ncLe
 
 
 
-
-
-/*
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode::GetRSCodeWord
 // 用  途：ＲＳ誤り訂正コードワード取得
 // 引  数：データコードワードアドレス、データコードワード長、ＲＳコードワード長
 // 備  考：総コードワード分のエリアを確保してから呼び出し
 
-void CQR_Encode::GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRSCodeWord)
+void GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRSCodeWord)
 {
 	int i, j;
 
@@ -694,62 +776,52 @@ void CQR_Encode::GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRS
 }
 
 
+void clear_qrimage(uint8_t *data) {
+  for(int n=0;n<MAX_QRCODESIZE;n++) {
+    data[n] = 0;
+  }
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode::FormatModule
 // 用  途：モジュールへのデータ配置
 // 戻り値：一辺のモジュール数
 
-void CQR_Encode::FormatModule()
-{
+void FormatModule(uint8_t *image,int width,uint8_t *input_data,int input_data_len,int m_nMaskingNo,int version,int level) {
 	int i, j;
 
-  clear_qrimage();
-	//memset(m_byModuleData,0,sizeof(m_byModuleData));
+  clear_qrimage(image);
+  qr_dumpimage(image,width);
 
 	// 機能モジュール配置
-	SetFunctionModule();
 
 	// データパターン配置
-	SetCodeWordPattern();
+	SetCodeWordPattern(image,width,input_data,input_data_len);
+  cout << "data" << endl;
+  qr_dumpimage(image,width);
 
-	if (m_nMaskingNo == -1)
-	{
-		// 最適マスキングパターン選択
-		m_nMaskingNo = 0;
+	SetMaskingPattern(image,width,m_nMaskingNo); // マスキング
+  qr_dumpimage(image,width);
 
-		SetMaskingPattern(m_nMaskingNo); // マスキング
-		SetFormatInfoPattern(m_nMaskingNo); // フォーマット情報パターン配置
 
-		int nMinPenalty = CountPenalty();
+	SetFunctionModule(image,width,version);
+  qr_dumpimage(image,width);
 
-    // try different masking patterns, the one with the lowest penalty wins!
-		for (i = 1; i <= 7; ++i)
-		{
-			SetMaskingPattern(i); // マスキング
-			SetFormatInfoPattern(i); // フォーマット情報パターン配置
 
-			int nPenalty = CountPenalty();
-
-			if (nPenalty < nMinPenalty)
-			{
-				nMinPenalty = nPenalty;
-				m_nMaskingNo = i;
-			}
-		}
-	}
-
-	SetMaskingPattern(m_nMaskingNo); // マスキング
-	SetFormatInfoPattern(m_nMaskingNo); // フォーマット情報パターン配置
+	SetFormatInfoPattern(image,width,m_nMaskingNo,level); // フォーマット情報パターン配置
+  qr_dumpimage(image,width);
 
 	// モジュールパターンをブール値に変換
-	for (i = 0; i < m_nSymbolSize; ++i)
+/*
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize; ++j)
+		for (j = 0; j < width; ++j)
 		{
-      set_qrimage_data(i,j,1);
+      qr_setmodule(image,width,i,j,1);
 //			m_byModuleData[i][j] = (uint8_t)((m_byModuleData[i][j] & 0x11) != 0);
 		}
 	}
+*/
 }
 
 
@@ -759,69 +831,74 @@ void CQR_Encode::FormatModule()
 // 用  途：機能モジュール配置
 // 備  考：フォーマット情報は機能モジュール登録のみ(実データは空白)
 
-void CQR_Encode::SetFunctionModule()
-{
+// My understanding is that this function places the various formating and alignment data on the image.
+// It does not add the coded data to the image.
+void SetFunctionModule(uint8_t *image,int width,int version) {
 	int i, j;
 
 	// 位置検出パターン
-	SetFinderPattern(0, 0);
-	SetFinderPattern(m_nSymbolSize - 7, 0);
-	SetFinderPattern(0, m_nSymbolSize - 7);
+	SetFinderPattern(image,width,0, 0);
+	SetFinderPattern(image,width,width - 7, 0);
+	SetFinderPattern(image,width,0,width - 7);
+  qr_dumpimage(image,width);
 
 	// 位置検出パターンセパレータ
 	for (i = 0; i < 8; ++i) {
-    set_qrimage(i,7,1);
-    set_qrimage(7,i,1);
+    qr_setmodule(image,width,i,7,0);
+    qr_setmodule(image,width,7,i,0);
 //	 	m_byModuleData[i][7] = m_byModuleData[7][i] = '\x20';
-    set_qrimage(m_nSymbolSize-8,i) = 1;
-    set_qrimage(m_nSymbolSize-8+i,7) = 1;
+    qr_setmodule(image,width,width-8,i,0);
+    qr_setmodule(image,width,width-8+i,7,0);
 //		m_byModuleData[m_nSymbolSize - 8][i] = m_byModuleData[m_nSymbolSize - 8 + i][7] = '\x20';
 
 
-    set_qrimage(i,m_nSymbolSize-8  ) = 1;
-    set_qrimage(7,m_nSymbolSize-8+i) = 1;
+    qr_setmodule(image,width,i,width-8,0);
+    qr_setmodule(image,width,7,width-8+i,0);
 //		m_byModuleData[i][m_nSymbolSize - 8] = m_byModuleData[7][m_nSymbolSize - 8 + i] = '\x20';
 	}
 
 	// フォーマット情報記述位置を機能モジュール部として登録
 	for (i = 0; i < 9; ++i)
 	{
-    set_qrimage(i,8,1);
-    set_qrimage(8,i,1);
+    qr_setmodule(image,width,i,8,0);
+    qr_setmodule(image,width,8,i,0);
 //		m_byModuleData[i][8] = m_byModuleData[8][i] = '\x20';
 	}
 
 	for (i = 0; i < 8; ++i)
 	{
-    set_qrimage(m_nSymbolSize-8+i,8,1);
-    set_qrimage(8,m_nSymbolSize-8+i,1);
+    qr_setmodule(image,width,width-8+i,8,0);
+    qr_setmodule(image,width,8,width-8+i,0);
 //		m_byModuleData[m_nSymbolSize - 8 + i][8] = m_byModuleData[8][m_nSymbolSize - 8 + i] = '\x20';
 	}
-
-	// バージョン情報パターン
-	SetVersionPattern();
-
-	// 位置合わせパターン
-	for (i = 0; i < QR_VersionInfo[m_nVersion].ncAlignPoint; ++i)
-	{
-		SetAlignmentPattern(QR_VersionInfo[m_nVersion].nAlignPoint[i], 6);
-		SetAlignmentPattern(6, QR_VersionInfo[m_nVersion].nAlignPoint[i]);
-
-		for (j = 0; j < QR_VersionInfo[m_nVersion].ncAlignPoint; ++j)
-		{
-			SetAlignmentPattern(QR_VersionInfo[m_nVersion].nAlignPoint[i], QR_VersionInfo[m_nVersion].nAlignPoint[j]);
-		}
-	}
-
+  cout << "PREVERSION,POST RANDOM" << endl;
+  qr_dumpimage(image,width);
+  
   // Timing Pattern
 	// タイミングパターン
-	for (i = 8; i <= m_nSymbolSize - 9; ++i)
+	for (i = 8; i <= width- 9; ++i)
 	{
-    set_qrimage(i,6,1);
-    set_qrimage(6,i,1);
+    qr_setmodule(image,width,i,6,(i%2));
+    qr_setmodule(image,width,6,i,(i%2));
 //		m_byModuleData[i][6] = (i % 2) == 0 ? '\x30' : '\x20';
 //		m_byModuleData[6][i] = (i % 2) == 0 ? '\x30' : '\x20';
 	}
+
+	// バージョン情報パターン
+	SetVersionPattern(image,width,version);
+
+	// 位置合わせパターン
+	for (i = 0; i < QR_VersionInfo[version].ncAlignPoint; ++i)
+	{
+		SetAlignmentPattern(image,width,QR_VersionInfo[version].nAlignPoint[i], 6);
+		SetAlignmentPattern(image,width,6, QR_VersionInfo[version].nAlignPoint[i]);
+
+		for (j = 0; j < QR_VersionInfo[version].ncAlignPoint; ++j)
+		{
+			SetAlignmentPattern(image,width,QR_VersionInfo[version].nAlignPoint[i], QR_VersionInfo[version].nAlignPoint[j]);
+		}
+	}
+
 }
 
 
@@ -830,7 +907,7 @@ void CQR_Encode::SetFunctionModule()
 // 用  途：位置検出パターン配置
 // 引  数：配置左上座標
 
-void CQR_Encode::SetFinderPattern(int x, int y)
+void SetFinderPattern(uint8_t *image,int width,int x, int y)
 {
 	static uint8_t byPattern[] = {0x7f,  // 1111111b
 							   0x41,  // 1000001b
@@ -845,7 +922,7 @@ void CQR_Encode::SetFinderPattern(int x, int y)
 	{
 		for (j = 0; j < 7; ++j)
 		{
-      set_qrimage(x+j,y+i,1);
+      qr_setmodule(image,width,x+j,y+i,(byPattern[i] & (1 << (6 - j))));
 //			m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (6 - j))) ? '\x30' : '\x20'; 
 		}
 	}
@@ -857,7 +934,7 @@ void CQR_Encode::SetFinderPattern(int x, int y)
 // 用  途：位置合わせパターン配置
 // 引  数：配置中央座標
 
-void CQR_Encode::SetAlignmentPattern(int x, int y)
+void SetAlignmentPattern(uint8_t *image,int width, int x, int y)
 {
 	static uint8_t byPattern[] = {0x1f,  // 11111b
 							   0x11,  // 10001b
@@ -866,6 +943,8 @@ void CQR_Encode::SetAlignmentPattern(int x, int y)
 							   0x1f}; // 11111b
 	int i, j;
 
+  // There's already alignment data here so return.
+  if(qr_getmodule(image,width,x,y) != 0) return;
 //	if (m_byModuleData[x][y] & 0x20)
 //		return; // 機能モジュールと重複するため除外
 
@@ -875,7 +954,7 @@ void CQR_Encode::SetAlignmentPattern(int x, int y)
 	{
 		for (j = 0; j < 5; ++j)
 		{
-      set_qrimage(x+j,y+i,1);
+      qr_setmodule(image,width,x+j,y+i,byPattern[i] & (1 << (4 - j)));
 			//m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (4 - j))) ? '\x30' : '\x20'; 
 		}
 	}
@@ -887,14 +966,14 @@ void CQR_Encode::SetAlignmentPattern(int x, int y)
 // 用  途：バージョン(型番)情報パターン配置
 // 備  考：拡張ＢＣＨ(18,6)符号を誤り訂正として使用
 
-void CQR_Encode::SetVersionPattern()
+void SetVersionPattern(uint8_t *image,int width,int version)
 {
 	int i, j;
 
-	if (m_nVersion <= 6)
+	if (version <= 6)
 		return;
 
-	int nVerData = m_nVersion << 12;
+	int nVerData = version << 12;
 
 	// 剰余ビット算出
 	for (i = 0; i < 6; ++i)
@@ -905,14 +984,14 @@ void CQR_Encode::SetVersionPattern()
 		}
 	}
 
-	nVerData += m_nVersion << 12;
+	nVerData += version << 12;
 
 	for (i = 0; i < 6; ++i)
 	{
 		for (j = 0; j < 3; ++j)
 		{
-      set_qrimage(m_nSymbolSize-11+j,i,1);
-      set_qrimage(i,m_nSymbolSize-11+j,1);
+      qr_setmodule(image,width,width-11+j,i,(nVerData & (1 << (i * 3 + j))) );
+      qr_setmodule(image,width,i,width-11+j,(nVerData & (1 << (i * 3 + j))) );
 			//m_byModuleData[m_nSymbolSize - 11 + j][i] = m_byModuleData[i][m_nSymbolSize - 11 + j] =
 			//(nVerData & (1 << (i * 3 + j))) ? '\x30' : '\x20';
 		}
@@ -924,17 +1003,17 @@ void CQR_Encode::SetVersionPattern()
 // CQR_Encode::SetCodeWordPattern
 // 用  途：データパターン配置
 
-void CQR_Encode::SetCodeWordPattern()
+void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size)
 {
-	int x = m_nSymbolSize;
-	int y = m_nSymbolSize - 1;
+	int x = width;
+	int y = width - 1;
 
 	int nCoef_x = 1; // ｘ軸配置向き
 	int nCoef_y = 1; // ｙ軸配置向き
 
 	int i, j;
 
-	for (i = 0; i < m_ncAllCodeWord; ++i)
+	for (i = 0; i < encoded_data_size; ++i)
 	{
 		for (j = 0; j < 8; ++j)
 		{
@@ -947,9 +1026,9 @@ void CQR_Encode::SetCodeWordPattern()
 				{
 					y += nCoef_y;
 
-					if (y < 0 || y == m_nSymbolSize)
+					if (y < 0 || y == width)
 					{
-						y = (y < 0) ? 0 : m_nSymbolSize - 1;
+						y = (y < 0) ? 0 : width - 1;
 						nCoef_y *= -1;
 
 						x -= 2;
@@ -959,9 +1038,10 @@ void CQR_Encode::SetCodeWordPattern()
 					}
 				}
 			}
-			//while (m_byModuleData[x][y] & 0x20); // 機能モジュールを除外
+			while (qr_getmodule(image,width,x,y));
+//m_byModuleData[x][y] & 0x20); // 機能モジュールを除外
   
-      if(m_byAllCodeWord[i] & (1 << (7-j))) set_qrimage(x,y,1); else set_qrimage(x,y,0);
+      if(encoded_data[i] & (1 << (7-j))) qr_setmodule(image,width,x,y,1); else qr_setmodule(image,width,x,y,0);
 			//m_byModuleData[x][y] = (m_byAllCodeWord[i] & (1 << (7 - j))) ? '\x02' : '\x00';
 		}
 	}
@@ -973,15 +1053,18 @@ void CQR_Encode::SetCodeWordPattern()
 // 用  途：マスキングパターン配置
 // 引  数：マスキングパターン番号
 
-void CQR_Encode::SetMaskingPattern(int nPatternNo)
+void SetMaskingPattern(uint8_t *image,int width,int nPatternNo)
 {
 	int i, j;
+
+  int m_nSymbolSize = width;
 
 	for (i = 0; i < m_nSymbolSize; ++i)
 	{
 		for (j = 0; j < m_nSymbolSize; ++j)
 		{
-			if (! (m_byModuleData[j][i] & 0x20)) // 機能モジュールを除外
+			if (! (qr_getmodule(image,width,j,i))) // 機能モジュールを除外
+			//if (! (m_byModuleData[j][i] & 0x20)) // 機能モジュールを除外
 			{
 				bool bMask;
 
@@ -1020,7 +1103,9 @@ void CQR_Encode::SetMaskingPattern(int nPatternNo)
 					break;
 				}
 
-				m_byModuleData[j][i] = (uint8_t)((m_byModuleData[j][i] & 0xfe) | (((m_byModuleData[j][i] & 0x02) > 1) ^ bMask));
+        int d = qr_getmodule(image,width,j,i) ^ bMask;
+        qr_setmodule(image,width,j,i,d);
+//				m_byModuleData[j][i] = (uint8_t)((m_byModuleData[j][i] & 0xfe) | (((m_byModuleData[j][i] & 0x02) > 1) ^ bMask));
 			}
 		}
 	}
@@ -1032,12 +1117,12 @@ void CQR_Encode::SetMaskingPattern(int nPatternNo)
 // 用  途：フォーマット情報配置
 // 引  数：マスキングパターン番号
 
-void CQR_Encode::SetFormatInfoPattern(int nPatternNo)
+void SetFormatInfoPattern(uint8_t *image,int width,int nPatternNo,int level)
 {
 	int nFormatInfo;
 	int i;
 
-	switch (m_nLevel)
+	switch (level)
 	{
 	case QR_LEVEL_M:
 		nFormatInfo = 0x00; // 00nnnb
@@ -1075,28 +1160,32 @@ void CQR_Encode::SetFormatInfoPattern(int nPatternNo)
 	nFormatData ^= 0x5412; // 101010000010010b
 
 	// 左上位置検出パターン周り配置
-	for (i = 0; i <= 5; ++i)
-		m_byModuleData[8][i] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
+	for (i = 0; i <= 5; ++i) qr_setmodule(image,width,8,i,(nFormatData & (1 << i)));
+//		m_byModuleData[8][i] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
 
-	m_byModuleData[8][7] = (nFormatData & (1 << 6)) ? '\x30' : '\x20';
-	m_byModuleData[8][8] = (nFormatData & (1 << 7)) ? '\x30' : '\x20';
-	m_byModuleData[7][8] = (nFormatData & (1 << 8)) ? '\x30' : '\x20';
+  qr_setmodule(image,width,8,7,(nFormatData & (1 << 6)));
+  qr_setmodule(image,width,8,8,(nFormatData & (1 << 7)));
+  qr_setmodule(image,width,7,8,(nFormatData & (1 << 8)));
+	//m_byModuleData[8][7] = (nFormatData & (1 << 6)) ? '\x30' : '\x20';
+	//m_byModuleData[8][8] = (nFormatData & (1 << 7)) ? '\x30' : '\x20';
+	//m_byModuleData[7][8] = (nFormatData & (1 << 8)) ? '\x30' : '\x20';
 
-	for (i = 9; i <= 14; ++i)
-		m_byModuleData[14 - i][8] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
+	for (i = 9; i <= 14; ++i) qr_setmodule(image,width,14-i,8,(nFormatData & (1 << i)));
+//		m_byModuleData[14 - i][8] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
 
 	// 右上位置検出パターン下配置
-	for (i = 0; i <= 7; ++i)
-		m_byModuleData[m_nSymbolSize - 1 - i][8] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
+	for (i = 0; i <= 7; ++i) qr_setmodule(image,width,width-1-i,8,nFormatData & (1 << i));
+//		m_byModuleData[m_nSymbolSize - 1 - i][8] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
 
 	// 左下位置検出パターン右配置
-	m_byModuleData[8][m_nSymbolSize - 8] = '\x30'; // 固定暗モジュール
+  qr_setmodule(image,width,8,width-8,1);
+//	m_byModuleData[8][m_nSymbolSize - 8] = '\x30'; // 固定暗モジュール
 
-	for (i = 8; i <= 14; ++i)
-		m_byModuleData[8][m_nSymbolSize - 15 + i] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
+	for (i = 8; i <= 14; ++i) qr_setmodule(image,width,8,width-15+i,(nFormatData & (1 << i)));
+		//m_byModuleData[8][m_nSymbolSize - 15 + i] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
 }
 
-
+/*
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode::CountPenalty
 // 用  途：マスク後ペナルティスコア算出
@@ -1247,33 +1336,26 @@ int CQR_Encode::CountPenalty()
 */
       
 
-int qr_getmodule(uint8_t *outputdata,int x,int y) {
-
-  int bitpos = x*y;
-
-  int byte = (x*y)%8;
-  int bit  = bitpos-byte;
-
-  if(outputdata[byte] & (1<bit)) {return 1;}
-                            else {return 0;}
-}
 
 int main() {
   char   *inputdata = "TESTTESTTESTTEST";
 
+  int outputdata_len;
   uint8_t outputdata[4096];
 
-  bool ok = qr_encode_source_data((uint8_t *) inputdata,outputdata,16,4);
+//  bool ok = qr_encode_source_data((uint8_t *) inputdata,outputdata,16,4);
+//  bool ok = qr_encode_with_version(0,3,(uint8_t *) inputdata,16,outputdata,&outputdata_len);
+
+  int width=25;
+                                 //<
+  bool ok = qr_encode_data(3,3,0,2,(uint8_t *) inputdata,16,outputdata,&outputdata_len,&width);
+
+  cout << "data: ";
+  for(int n=0;n<100;n++) {
+    cout << (int) outputdata[n] << ",";
+  }
+  cout << endl;
 
   if(ok == false) printf("Encoding error\n");
-
-  int width=29;
-  for(int y=0;y<width;y++) {
-    for(int x=0;x<width;x++) {
-      int i = qr_getmodule(outputdata,x,y);
-      if(i != 0) {printf("1");}
-            else {printf("0");}
-    }
-    printf("\n");
-  }
+  qr_dumpimage(outputdata,width);
 }
