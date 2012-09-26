@@ -1417,19 +1417,3 @@ int CQR_Encode::CountPenalty()
 	return nPenalty;
 }
 */
-      
-
-
-int main() {
-  char   *inputdata = "TESTTESTTESTTEST";
-
-  int outputdata_len=16;
-  uint8_t outputdata[4096];
-
-  int width=25;
-                                 //<
-  bool ok = qr_encode_data(3,2,0,3,(uint8_t *) inputdata,16,outputdata,&outputdata_len,&width);
-
-  if(ok == false) printf("Encoding error\n");
-  qr_dumpimage(outputdata,width);
-}
