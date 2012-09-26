@@ -28,6 +28,10 @@ void SetFormatInfoPattern(uint8_t *image,int width,int nPatternNo,int level);
 void SetVersionPattern(uint8_t *image,int width);
 void SetAlignmentPattern(uint8_t *image,int width, int x, int y);
 void SetVersionPattern(uint8_t *image,int width,int version);
+int CountPenalty(uint8_t *image,int width);
+bool is_on_finder_pattern(int width,int x,int y);
+bool is_on_deadarea(int width,int x,int y);
+bool is_on_timing(int width,int x,int y);
 
 void qr_setmodule(uint8_t *image,int width,int x,int y,int value) {
   int bitpos = ((y*width)+x);
@@ -48,6 +52,13 @@ int qr_getmodule(uint8_t *outputdata,int width,int x,int y) {
 
   if(outputdata[byte] & (1<<bit)) {return 1;}
                              else {return 0;}
+}
+
+int qr_getmoduleC(uint8_t *outputdata,int width,int x,int y) {
+  if(is_on_timing(width,x,y)) return 1;
+  if(is_on_deadarea(width,x,y)) return 1;
+  if(is_on_finder_pattern(width,x,y)) return 1;
+  return 0;
 }
 
 void qr_dumpimage(uint8_t *image,int width) {
@@ -81,23 +92,35 @@ void qr_dumpimage(uint8_t *image,int width) {
 // lpsSource : Source data
 // ncSource  : Source data length, if 0 then assume NULL terminated.
 bool qr_encode_data(int nLevel, int nVersion,bool bAutoExtent, int nMaskingNo, const uint8_t * lpsSource, int ncSource,uint8_t *outputdata,int *outputdata_len,int *width) {
+
+  // If negative masking number, we need to find the mask with the best penalty
+  if(nMaskingNo == -1) {
+    int min_penalty = 100000000;
+		for(int n=0;n<=7;n++) {
+			uint8_t outputdata[4096];
+			int width;
+			bool ok = qr_encode_data(nLevel,nVersion,bAutoExtent,n,lpsSource,ncSource,outputdata,outputdata_len,&width);
+			
+      int penalty = CountPenalty(outputdata,width);
+      cout << " mask: " << n << " penalty: " << penalty << endl;
+      if(penalty < min_penalty) { min_penalty = penalty; nMaskingNo = n;}
+		}
+    cout << "Selected mask: " << nMaskingNo << endl;
+  }
+
+
 	int i, j;
   
-//  uint8_t *outputdata = m_byDataCodeWord;
-  
-//  int &m_ncDataCodeWordBit = *outputdata_len;
-
   uint8_t m_byDataCodeWord[MAX_INPUTDATA];
   int     m_ncDataCodeWordBit;
 
-
-//	m_nLevel = nLevel;
 	int m_nMaskingNo = nMaskingNo;
 
 	// データ長が指定されていない場合は lstrlen によって取得
 	int ncLength = ncSource > 0 ? ncSource : strlen((char *) lpsSource);
 
 	if (ncLength == 0) {
+    cout << "Data length 0" << endl;
 		return false; // データなし
   }
 
@@ -106,9 +129,10 @@ bool qr_encode_data(int nLevel, int nVersion,bool bAutoExtent, int nMaskingNo, c
 	//int nEncodeVersion = GetEncodeVersion(nVersion, lpsSource, ncLength);
   int nEncodeVersion = qr_encode_with_version(nVersion,nLevel,lpsSource,ncLength,m_byDataCodeWord,&m_ncDataCodeWordBit);
 
-	if (nEncodeVersion == 0)
+	if (nEncodeVersion == 0) {
+    cout << "encoding failure" << endl;
 		return false; // 容量オーバー
-
+  }
   int m_nVersion;
 	if (nVersion == 0)
 	{
@@ -1268,26 +1292,24 @@ void SetFormatInfoPattern(uint8_t *image,int width,int nPatternNo,int level)
 		//m_byModuleData[8][m_nSymbolSize - 15 + i] = (nFormatData & (1 << i)) ? '\x30' : '\x20';
 }
 
-/*
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode::CountPenalty
 // 用  途：マスク後ペナルティスコア算出
 
-int CQR_Encode::CountPenalty()
-{
+int CountPenalty(uint8_t *image,int width) {
 	int nPenalty = 0;
 	int i, j, k;
 
 	// 同色の列の隣接モジュール
-	for (i = 0; i < m_nSymbolSize; ++i)
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize - 4; ++j)
+		for (j = 0; j < width - 4; ++j)
 		{
 			int nCount = 1;
 
-			for (k = j + 1; k < m_nSymbolSize; k++)
+			for (k = j + 1; k < width; k++)
 			{
-				if (((m_byModuleData[i][j] & 0x11) == 0) == ((m_byModuleData[i][k] & 0x11) == 0))
+				if ((qr_getmoduleC(image,width,i,j) == 0) == (qr_getmoduleC(image,width,i,k) == 0))
 					++nCount;
 				else
 					break;
@@ -1303,15 +1325,15 @@ int CQR_Encode::CountPenalty()
 	}
 
 	// 同色の行の隣接モジュール
-	for (i = 0; i < m_nSymbolSize; ++i)
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize - 4; ++j)
+		for (j = 0; j < width - 4; ++j)
 		{
 			int nCount = 1;
 
-			for (k = j + 1; k < m_nSymbolSize; k++)
+			for (k = j + 1; k < width; k++)
 			{
-				if (((m_byModuleData[j][i] & 0x11) == 0) == ((m_byModuleData[k][i] & 0x11) == 0))
+				if ((qr_getmoduleC(image,width,j,i) == 0) == (qr_getmoduleC(image,width,k,i) == 0))
 					++nCount;
 				else
 					break;
@@ -1327,13 +1349,13 @@ int CQR_Encode::CountPenalty()
 	}
 
 	// 同色のモジュールブロック（２×２）
-	for (i = 0; i < m_nSymbolSize - 1; ++i)
+	for (i = 0; i < width - 1; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize - 1; ++j)
+		for (j = 0; j < width - 1; ++j)
 		{
-			if ((((m_byModuleData[i][j] & 0x11) == 0) == ((m_byModuleData[i + 1][j]		& 0x11) == 0)) &&
-				(((m_byModuleData[i][j] & 0x11) == 0) == ((m_byModuleData[i]	[j + 1] & 0x11) == 0)) &&
-				(((m_byModuleData[i][j] & 0x11) == 0) == ((m_byModuleData[i + 1][j + 1] & 0x11) == 0)))
+			if (((qr_getmodule(image,width,i,j) == 0) == (qr_getmodule(image,width,i + 1,j) == 0)) &&
+          ((qr_getmodule(image,width,i,j) == 0) == (qr_getmodule(image,width,i,j + 1) == 0)) &&
+				  ((qr_getmodule(image,width,i,j) == 0) == (qr_getmodule(image,width,i + 1,j + 1) == 0)))
 			{
 				nPenalty += 3;
 			}
@@ -1341,27 +1363,29 @@ int CQR_Encode::CountPenalty()
 	}
 
 	// 同一列における 1:1:3:1:1 比率（暗:明:暗:明:暗）のパターン
-	for (i = 0; i < m_nSymbolSize; ++i)
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize - 6; ++j)
+		for (j = 0; j < width - 6; ++j)
 		{
-			if (((j == 0) ||				 (! (m_byModuleData[i][j - 1] & 0x11))) && // 明 または シンボル外
-											 (   m_byModuleData[i][j]     & 0x11)   && // 暗 - 1
-											 (! (m_byModuleData[i][j + 1] & 0x11))  && // 明 - 1
-											 (   m_byModuleData[i][j + 2] & 0x11)   && // 暗 ┐
-											 (   m_byModuleData[i][j + 3] & 0x11)   && // 暗 │3
-											 (   m_byModuleData[i][j + 4] & 0x11)   && // 暗 ┘
-											 (! (m_byModuleData[i][j + 5] & 0x11))  && // 明 - 1
-											 (   m_byModuleData[i][j + 6] & 0x11)   && // 暗 - 1
-				((j == m_nSymbolSize - 7) || (! (m_byModuleData[i][j + 7] & 0x11))))   // 明 または シンボル外
+
+      // 明 means bright. 暗 means dark.
+			if (((j == 0) || (! (qr_getmodule(image,width,i,j - 1))) && // 明 または シンボル外
+											 (  qr_getmodule(image,width,i,j))   && // 暗 - 1
+											 (! (qr_getmodule(image,width,i,j + 1)))  && // 明- 1
+											 (   qr_getmodule(image,width,i,j + 2))   && // 暗 ┐
+											 (   qr_getmodule(image,width,i,j + 3))   && // 暗│3
+											 (   qr_getmodule(image,width,i,j + 4))   && // 暗 ┘
+											 (! (qr_getmodule(image,width,i,j + 5)))  && // 明 - 1
+											 (   qr_getmodule(image,width,i,j + 6))   && // 暗 - 1
+				((j == width - 7) || (! (qr_getmoduleC(image,width,i,j + 7))))))   // 明 または シンボル外
 			{
 				// 前または後に4以上の明パターン
-				if (((j < 2 || ! (m_byModuleData[i][j - 2] & 0x11)) && 
-					 (j < 3 || ! (m_byModuleData[i][j - 3] & 0x11)) &&
-					 (j < 4 || ! (m_byModuleData[i][j - 4] & 0x11))) ||
-					((j >= m_nSymbolSize - 8  || ! (m_byModuleData[i][j + 8]  & 0x11)) &&
-					 (j >= m_nSymbolSize - 9  || ! (m_byModuleData[i][j + 9]  & 0x11)) &&
-					 (j >= m_nSymbolSize - 10 || ! (m_byModuleData[i][j + 10] & 0x11))))
+				if (((j < 2 || ! (qr_getmodule(image,width,i,j - 2))) && 
+					 (j < 3 || ! (qr_getmodule(image,width,i,j - 3))) &&
+					 (j < 4 || ! (qr_getmodule(image,width,i,j - 4)))) ||
+					((j >= width - 8  || ! (qr_getmodule(image,width,i,j + 8))) &&
+					 (j >= width - 9  || ! (qr_getmodule(image,width,i,j + 9))) &&
+					 (j >= width - 10 || ! (qr_getmodule(image,width,i,j + 10)))))
 				{
 					nPenalty += 40;
 				}
@@ -1370,27 +1394,27 @@ int CQR_Encode::CountPenalty()
 	}
 
 	// 同一行における 1:1:3:1:1 比率（暗:明:暗:明:暗）のパターン
-	for (i = 0; i < m_nSymbolSize; ++i)
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize - 6; ++j)
+		for (j = 0; j < width - 6; ++j)
 		{
-			if (((j == 0) ||				 (! (m_byModuleData[j - 1][i] & 0x11))) && // 明 または シンボル外
-											 (   m_byModuleData[j]    [i] & 0x11)   && // 暗 - 1
-											 (! (m_byModuleData[j + 1][i] & 0x11))  && // 明 - 1
-											 (   m_byModuleData[j + 2][i] & 0x11)   && // 暗 ┐
-											 (   m_byModuleData[j + 3][i] & 0x11)   && // 暗 │3
-											 (   m_byModuleData[j + 4][i] & 0x11)   && // 暗 ┘
-											 (! (m_byModuleData[j + 5][i] & 0x11))  && // 明 - 1
-											 (   m_byModuleData[j + 6][i] & 0x11)   && // 暗 - 1
-				((j == m_nSymbolSize - 7) || (! (m_byModuleData[j + 7][i] & 0x11))))   // 明 または シンボル外
+			if (((j == 0) ||				 (! (qr_getmodule(image,width,j - 1,i)))) && // 明 または シンボル外
+											 (   qr_getmodule(image,width,j,i))   && // 暗 - 1
+											 (! (qr_getmodule(image,width,j + 1,i)))  && // 明 - 1
+											 (   qr_getmodule(image,width,j + 2,i))   && // 暗 ┐
+											 (   qr_getmodule(image,width,j + 3,i))   && // 暗 │3
+											 (   qr_getmodule(image,width,j + 4,i))   && // 暗 ┘
+											 (! (qr_getmodule(image,width,j + 5,i)))  && // 明 - 1
+											 (   qr_getmodule(image,width,j + 6,i))   && // 暗 - 1
+				((j == width - 7) || (! (qr_getmodule(image,width,j + 7,i)))))   // 明 または シンボル外
 			{
 				// 前または後に4以上の明パターン
-				if (((j < 2 || ! (m_byModuleData[j - 2][i] & 0x11)) && 
-					 (j < 3 || ! (m_byModuleData[j - 3][i] & 0x11)) &&
-					 (j < 4 || ! (m_byModuleData[j - 4][i] & 0x11))) ||
-					((j >= m_nSymbolSize - 8  || ! (m_byModuleData[j + 8][i]  & 0x11)) &&
-					 (j >= m_nSymbolSize - 9  || ! (m_byModuleData[j + 9][i]  & 0x11)) &&
-					 (j >= m_nSymbolSize - 10 || ! (m_byModuleData[j + 10][i] & 0x11))))
+				if (((j < 2 || ! (qr_getmodule(image,width,j - 2,i))) && 
+					 (j < 3 || ! (qr_getmodule(image,width,j - 3,i))) &&
+					 (j < 4 || ! (qr_getmodule(image,width,j - 4,i)))) ||
+					((j >= width - 8  || ! (qr_getmodule(image,width,j + 8,i))) &&
+					 (j >= width - 9  || ! (qr_getmodule(image,width,j + 9,i))) &&
+					 (j >= width - 10 || ! (qr_getmodule(image,width,j + 10,i)))))
 				{
 					nPenalty += 40;
 				}
@@ -1401,19 +1425,19 @@ int CQR_Encode::CountPenalty()
 	// 全体に対する暗モジュールの占める割合
 	int nCount = 0;
 
-	for (i = 0; i < m_nSymbolSize; ++i)
+	for (i = 0; i < width; ++i)
 	{
-		for (j = 0; j < m_nSymbolSize; ++j)
+		for (j = 0; j < width; ++j)
 		{
-			if (! (m_byModuleData[i][j] & 0x11))
+			if (! (qr_getmoduleC(image,width,i,j)))
 			{
 				++nCount;
 			}
 		}
 	}
 
-	nPenalty += (abs(50 - ((nCount * 100) / (m_nSymbolSize * m_nSymbolSize))) / 5) * 10;
+  if(width == 0) return 0;
+	nPenalty += (abs(50 - ((nCount * 100) / (width * width))) / 5) * 10;
 
 	return nPenalty;
 }
-*/
