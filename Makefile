@@ -1,2 +1,3 @@
-qr_encode: main.cpp QR_Encode.cpp
-	g++ -Os main.cpp QR_Encode.cpp -o qr_encode
+
+qr_encodeem: qr_encodeem.cpp
+	g++ qr_encodeem.cpp -o qrem

@@ -1435,12 +1435,13 @@ void CQR_Encode::GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRS
 // CQR_Encode::FormatModule
 // 用  途：モジュールへのデータ配置
 // 戻り値：一辺のモジュール数
-
+/*
 void CQR_Encode::FormatModule()
 {
 	int i, j;
 
-	memset(m_byModuleData,0,sizeof(m_byModuleData));
+  clear_qrimage();
+	//memset(m_byModuleData,0,sizeof(m_byModuleData));
 
 	// 機能モジュール配置
 	SetFunctionModule();
@@ -1481,10 +1482,12 @@ void CQR_Encode::FormatModule()
 	{
 		for (j = 0; j < m_nSymbleSize; ++j)
 		{
+      set_qrimage_data(i,j)
 			m_byModuleData[i][j] = (uint8_t)((m_byModuleData[i][j] & 0x11) != 0);
 		}
 	}
 }
+*/
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -1502,22 +1505,33 @@ void CQR_Encode::SetFunctionModule()
 	SetFinderPattern(0, m_nSymbleSize - 7);
 
 	// 位置検出パターンセパレータ
-	for (i = 0; i < 8; ++i)
-	{
-		m_byModuleData[i][7] = m_byModuleData[7][i] = '\x20';
-		m_byModuleData[m_nSymbleSize - 8][i] = m_byModuleData[m_nSymbleSize - 8 + i][7] = '\x20';
-		m_byModuleData[i][m_nSymbleSize - 8] = m_byModuleData[7][m_nSymbleSize - 8 + i] = '\x20';
+	for (i = 0; i < 8; ++i) {
+    set_qrimage(i,7,1);
+    set_qrimage(7,i,1);
+//	 	m_byModuleData[i][7] = m_byModuleData[7][i] = '\x20';
+    set_qrimage(m_nSymbleSize-8,i) = 1;
+    set_qrimage(m_nSymbleSize-8+i,7) = 1;
+//		m_byModuleData[m_nSymbleSize - 8][i] = m_byModuleData[m_nSymbleSize - 8 + i][7] = '\x20';
+
+
+    set_qrimage(i,m_nSymbleSize-8  ) = 1;
+    set_qrimage(7,m_nSymbleSize-8+i) = 1;
+//		m_byModuleData[i][m_nSymbleSize - 8] = m_byModuleData[7][m_nSymbleSize - 8 + i] = '\x20';
 	}
 
 	// フォーマット情報記述位置を機能モジュール部として登録
 	for (i = 0; i < 9; ++i)
 	{
-		m_byModuleData[i][8] = m_byModuleData[8][i] = '\x20';
+    set_qrimage(i,8,1);
+    set_qrimage(8,i,1);
+//		m_byModuleData[i][8] = m_byModuleData[8][i] = '\x20';
 	}
 
 	for (i = 0; i < 8; ++i)
 	{
-		m_byModuleData[m_nSymbleSize - 8 + i][8] = m_byModuleData[8][m_nSymbleSize - 8 + i] = '\x20';
+    set_qrimage(m_nSymbleSize-8+i,8,1);
+    set_qrimage(8,m_nSymbleSize-8+i,1);
+//		m_byModuleData[m_nSymbleSize - 8 + i][8] = m_byModuleData[8][m_nSymbleSize - 8 + i] = '\x20';
 	}
 
 	// バージョン情報パターン
@@ -1535,11 +1549,14 @@ void CQR_Encode::SetFunctionModule()
 		}
 	}
 
+  // Timing Pattern
 	// タイミングパターン
 	for (i = 8; i <= m_nSymbleSize - 9; ++i)
 	{
-		m_byModuleData[i][6] = (i % 2) == 0 ? '\x30' : '\x20';
-		m_byModuleData[6][i] = (i % 2) == 0 ? '\x30' : '\x20';
+    set_qrimage(i,6,1);
+    set_qrimage(6,i,1);
+//		m_byModuleData[i][6] = (i % 2) == 0 ? '\x30' : '\x20';
+//		m_byModuleData[6][i] = (i % 2) == 0 ? '\x30' : '\x20';
 	}
 }
 
@@ -1564,7 +1581,8 @@ void CQR_Encode::SetFinderPattern(int x, int y)
 	{
 		for (j = 0; j < 7; ++j)
 		{
-			m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (6 - j))) ? '\x30' : '\x20'; 
+      set_qrimage(x+j,y+i,1);
+//			m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (6 - j))) ? '\x30' : '\x20'; 
 		}
 	}
 }
@@ -1584,8 +1602,8 @@ void CQR_Encode::SetAlignmentPattern(int x, int y)
 							   0x1f}; // 11111b
 	int i, j;
 
-	if (m_byModuleData[x][y] & 0x20)
-		return; // 機能モジュールと重複するため除外
+//	if (m_byModuleData[x][y] & 0x20)
+//		return; // 機能モジュールと重複するため除外
 
 	x -= 2; y -= 2; // 左上隅座標に変換
 
@@ -1593,7 +1611,8 @@ void CQR_Encode::SetAlignmentPattern(int x, int y)
 	{
 		for (j = 0; j < 5; ++j)
 		{
-			m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (4 - j))) ? '\x30' : '\x20'; 
+      set_qrimage(x+j,y+i,1);
+			//m_byModuleData[x + j][y + i] = (byPattern[i] & (1 << (4 - j))) ? '\x30' : '\x20'; 
 		}
 	}
 }
@@ -1628,8 +1647,10 @@ void CQR_Encode::SetVersionPattern()
 	{
 		for (j = 0; j < 3; ++j)
 		{
-			m_byModuleData[m_nSymbleSize - 11 + j][i] = m_byModuleData[i][m_nSymbleSize - 11 + j] =
-			(nVerData & (1 << (i * 3 + j))) ? '\x30' : '\x20';
+      set_qrimage(m_nSymbleSize-11+j,i,1);
+      set_qrimage(i,m_nSymbleSize-11+j,1);
+			//m_byModuleData[m_nSymbleSize - 11 + j][i] = m_byModuleData[i][m_nSymbleSize - 11 + j] =
+			//(nVerData & (1 << (i * 3 + j))) ? '\x30' : '\x20';
 		}
 	}
 }
@@ -1674,9 +1695,10 @@ void CQR_Encode::SetCodeWordPattern()
 					}
 				}
 			}
-			while (m_byModuleData[x][y] & 0x20); // 機能モジュールを除外
-
-			m_byModuleData[x][y] = (m_byAllCodeWord[i] & (1 << (7 - j))) ? '\x02' : '\x00';
+			//while (m_byModuleData[x][y] & 0x20); // 機能モジュールを除外
+  
+      if(m_byAllCodeWord[i] & (1 << (7-j))) set_qrimage(x,y,1); else set_qrimage(x,y,0);
+			//m_byModuleData[x][y] = (m_byAllCodeWord[i] & (1 << (7 - j))) ? '\x02' : '\x00';
 		}
 	}
 }

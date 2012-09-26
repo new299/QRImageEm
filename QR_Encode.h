@@ -72,6 +72,11 @@ typedef struct tagQR_VERSIONINFO
 /////////////////////////////////////////////////////////////////////////////
 // CQR_Encode クラス
 
+#define LARGEST_QR_BYTES 4096  // maximum number of bytes to allow for QR image storage.
+                               // set to 4096 for 177x177 QR code.
+                               // 2048 for 128x128
+                               // 512 for 64x64 etc.
+
 class CQR_Encode
 {
 // 構築/消滅
@@ -87,7 +92,13 @@ public:
 
 public:
 	int m_nSymbleSize;
-	uint8_t m_byModuleData[MAX_MODULESIZE][MAX_MODULESIZE]; // [x][y]
+
+  uint8_t qrimage_data[LARGEST_QR_BYTES];
+  uint8_t get_qrimage_bit(int x,int y);
+  void    set_qrimage_bit(int x,int y,int value);
+  void    clear_qrimage();
+
+	//uint8_t m_byModuleData[MAX_MODULESIZE][MAX_MODULESIZE]; // [x][y]
 	// bit5:機能モジュール（マスキング対象外）フラグ: Functional module, not subject to masking
 	// bit4:機能モジュール描画データ: Drawing data function module
 	// bit1:エンコードデータ: Encoded data
@@ -96,6 +107,7 @@ public:
   // Awful google translate of above line:
   // Determined by the logical sum of the function module 20h, drawing (and eventually binarization bool).
   // Drawing (and eventually binarization bool) The logical sum of the 11h
+  // I think this means bit6 is determed by adding the lower bits.
 
 private:
 	int m_ncDataCodeWordBit; // データコードワードビット長
