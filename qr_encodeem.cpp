@@ -22,8 +22,8 @@ void GetRSCodeWord(uint8_t *lpbyRSWork, int ncDataCodeWord, int ncRSCodeWord);
 void SetFinderPattern(uint8_t *image,int width,int x, int y);
 void FormatModule(uint8_t *image,int width,uint8_t *input_data,int input_data_len,int m_nMaskingNo,int version,int level);
 void SetFunctionModule(uint8_t *image,int width,int version);
-void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size);
-void SetMaskingPattern(uint8_t *image,int width,int nPatternNo);
+void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size,int version);
+void SetMaskingPattern(uint8_t *image,int width,int nPatternNo,int version);
 void SetFormatInfoPattern(uint8_t *image,int width,int nPatternNo,int level);
 void SetVersionPattern(uint8_t *image,int width);
 void SetAlignmentPattern(uint8_t *image,int width, int x, int y);
@@ -46,22 +46,27 @@ int qr_getmodule(uint8_t *outputdata,int width,int x,int y) {
   int byte = bitpos/8;
   int bit  = bitpos%8;
 
- // cout << "   " << byte << " " << bit << "   "<< endl;
   if(outputdata[byte] & (1<<bit)) {return 1;}
-                            else {return 0;}
+                             else {return 0;}
 }
 
 void qr_dumpimage(uint8_t *image,int width) {
  cout << endl;
  cout << endl;
  cout << endl;
+  for(int n=0;n<width;n++) {
+    printf("%2d",n);
+  }
+  printf("\n");
+
+
   for(int y=0;y<width;y++) {
     for(int x=0;x<width;x++) {
       int i = qr_getmodule(image,width,x,y);
-      if(i != 0) {printf("█");}
-            else {printf(" ");}
+      if(i != 0) {printf("██");}
+            else {printf("  ");}
     }
-    printf("\n");
+    printf("   %d\n",y);
   }
 
 }
@@ -378,8 +383,6 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *m_byDataCodeWord,in
 	}
 
 	++m_ncDataBlock;
-  cout << "m_ncDataBlock is: " << m_ncDataBlock << endl;
-
 
 	/////////////////////////////////////////////////////////////////////////
 	// 隣接する英数字モードブロックと数字モードブロックの並びをを条件により結合
@@ -388,7 +391,6 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *m_byDataCodeWord,in
 
 	int nBlock = 0;
 
-  cout << "m_ncDataBlock: " << m_ncDataBlock << endl;
 	while (nBlock < m_ncDataBlock - 1)
 	{
 		int ncJoinFront, ncJoinBehind; // 前後８ビットバイトモードブロックと結合した場合のビット長
@@ -611,7 +613,6 @@ bool qr_encode_source_data(const uint8_t* lpsSource,uint8_t *m_byDataCodeWord,in
   
 	for (i = 0; i < m_ncDataBlock && m_ncDataCodeWordBit != -1; ++i)
 	{
-    cout << "in this loop" << endl;
 		if (m_byBlockMode[i] == QR_MODE_NUMERAL)
 		{
 			/////////////////////////////////////////////////////////////////
@@ -791,39 +792,116 @@ void FormatModule(uint8_t *image,int width,uint8_t *input_data,int input_data_le
 	int i, j;
 
   clear_qrimage(image);
-  qr_dumpimage(image,width);
 
 	// 機能モジュール配置
+	SetFunctionModule(image,width,version);
 
 	// データパターン配置
-	SetCodeWordPattern(image,width,input_data,input_data_len);
-  cout << "data" << endl;
-  qr_dumpimage(image,width);
+	SetCodeWordPattern(image,width,input_data,input_data_len,version);
 
-	SetMaskingPattern(image,width,m_nMaskingNo); // マスキング
-  qr_dumpimage(image,width);
+	SetMaskingPattern(image,width,m_nMaskingNo,version); // マスキング
+  // added masking pattern
 
 
 	SetFunctionModule(image,width,version);
-  qr_dumpimage(image,width);
-
 
 	SetFormatInfoPattern(image,width,m_nMaskingNo,level); // フォーマット情報パターン配置
-  qr_dumpimage(image,width);
 
-	// モジュールパターンをブール値に変換
-/*
-	for (i = 0; i < width; ++i)
-	{
-		for (j = 0; j < width; ++j)
-		{
-      qr_setmodule(image,width,i,j,1);
-//			m_byModuleData[i][j] = (uint8_t)((m_byModuleData[i][j] & 0x11) != 0);
-		}
-	}
-*/
 }
 
+bool is_within(int start_x,int start_y,int end_x,int end_y,int x,int y) {
+
+  if((x >= start_x) && (x <= end_x) && (y >= start_y) && (y <= end_y)) return true;
+  return false;
+}
+
+bool is_on_finder_pattern(int width,int x,int y) {
+  if(is_within(0      ,0      ,7    ,7    ,x,y)) return true;
+  if(is_within(width-7,0      ,width,7    ,x,y)) return true;
+  if(is_within(0      ,width-7,7    ,width,x,y)) return true;
+  return false;
+}
+
+bool is_on_deadarea(int width,int x,int y) {
+
+  if((x >= 0) && (x < 8) && (y == 7)) return true;
+  if((y >= 0) && (y < 8) && (x == 7)) return true;
+
+  if((x >= 0) && (x < 8) && (y == width-8)) return true;
+  if((y >= (width-8)) && (y <= width) && (x == 7)) return true;
+
+  if((x == (width-8)) && (y >= 0) && (y < 8)) return true;
+  if((x >= (width-8)) && (x <= width) && (y == 7)) return true;
+
+	// フォーマット情報記述位置を機能モジュール部として登録
+
+  if((x >= 0) && (x < 9) && (y == 8)) return true;
+  if((y >= 0) && (y < 9) && (x == 8)) return true;
+
+  if((x >= width-8) && (x<=width) && (y == 8)) return true;
+  if((y >= width-8) && (y<=width) && (x == 8)) return true;
+
+  return false;
+}
+
+bool is_on_timing(int width,int x,int y) {
+  if((x>=8) && (x<=(width-9)) && (y == 6)) return true;
+  if((y>=8) && (y<=(width-9)) && (x == 6)) return true;
+  return false;
+}
+
+bool is_on_alignment(int version,int width,int x,int y) {
+
+	for (int i = 0; i < QR_VersionInfo[version].ncAlignPoint; ++i)
+	{
+
+    if(!is_on_finder_pattern(width,QR_VersionInfo[version].nAlignPoint[i], 6)) {
+    if(is_within(QR_VersionInfo[version].nAlignPoint[i]-2,
+                 4,
+                 QR_VersionInfo[version].nAlignPoint[i]-2+4,
+                 8,x,y)) { return true;}
+    }
+    if(!is_on_finder_pattern(width,6,QR_VersionInfo[version].nAlignPoint[i])) {
+    if(is_within(4,
+                 QR_VersionInfo[version].nAlignPoint[i]-2,
+                 8,
+                 QR_VersionInfo[version].nAlignPoint[i]-2+4,
+                 x,y)) return true;
+    }
+
+		for (int j = 0; j < QR_VersionInfo[version].ncAlignPoint; ++j)
+		{
+
+    if(!is_on_finder_pattern(width,QR_VersionInfo[version].nAlignPoint[i],QR_VersionInfo[version].nAlignPoint[i])) {
+    if(is_within(QR_VersionInfo[version].nAlignPoint[i]-2,
+                 QR_VersionInfo[version].nAlignPoint[j]-2,
+                 QR_VersionInfo[version].nAlignPoint[i]-2+4,
+                 QR_VersionInfo[version].nAlignPoint[j]-2+4,x,y)) return true; 
+    }
+
+		}
+	}
+
+  return false;
+}
+
+bool is_on_version(int width,int x,int y,int version) {
+
+  if(version <= 6) return false;
+  if(is_within(width-11,0,width-11+2,5,x,y)) { return true;}
+  if(is_within(0,width-11,5,width-11+2,x,y)) { return true;}
+
+  return false;
+}
+
+bool is_on_function_area(int width,int x,int y,int version) {
+  if(is_on_finder_pattern(width,x,y)) { return true;}
+  if(is_on_deadarea(width,x,y)) { return true;}
+  if(is_on_timing(width,x,y)) {return true;}
+  if(is_on_alignment(version,width,x,y)) { return true;}
+  if(is_on_version(width,x,y,version)){ return true;}
+  return false;
+}
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -840,7 +918,6 @@ void SetFunctionModule(uint8_t *image,int width,int version) {
 	SetFinderPattern(image,width,0, 0);
 	SetFinderPattern(image,width,width - 7, 0);
 	SetFinderPattern(image,width,0,width - 7);
-  qr_dumpimage(image,width);
 
 	// 位置検出パターンセパレータ
 	for (i = 0; i < 8; ++i) {
@@ -871,8 +948,6 @@ void SetFunctionModule(uint8_t *image,int width,int version) {
     qr_setmodule(image,width,8,width-8+i,0);
 //		m_byModuleData[m_nSymbolSize - 8 + i][8] = m_byModuleData[8][m_nSymbolSize - 8 + i] = '\x20';
 	}
-  cout << "PREVERSION,POST RANDOM" << endl;
-  qr_dumpimage(image,width);
   
   // Timing Pattern
 	// タイミングパターン
@@ -1003,7 +1078,7 @@ void SetVersionPattern(uint8_t *image,int width,int version)
 // CQR_Encode::SetCodeWordPattern
 // 用  途：データパターン配置
 
-void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size)
+void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encoded_data_size,int version)
 {
 	int x = width;
 	int y = width - 1;
@@ -1012,7 +1087,6 @@ void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encod
 	int nCoef_y = 1; // ｙ軸配置向き
 
 	int i, j;
-
 	for (i = 0; i < encoded_data_size; ++i)
 	{
 		for (j = 0; j < 8; ++j)
@@ -1038,10 +1112,15 @@ void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encod
 					}
 				}
 			}
-			while (qr_getmodule(image,width,x,y));
+			while (is_on_function_area(width,x,y,version));
+
 //m_byModuleData[x][y] & 0x20); // 機能モジュールを除外
   
-      if(encoded_data[i] & (1 << (7-j))) qr_setmodule(image,width,x,y,1); else qr_setmodule(image,width,x,y,0);
+      int set=0;
+      if(encoded_data[i] & (1 << (7-j))) set=1;else set=0;
+ 
+      qr_setmodule(image,width,x,y,set);
+
 			//m_byModuleData[x][y] = (m_byAllCodeWord[i] & (1 << (7 - j))) ? '\x02' : '\x00';
 		}
 	}
@@ -1053,7 +1132,7 @@ void SetCodeWordPattern(uint8_t *image,int width,uint8_t *encoded_data,int encod
 // 用  途：マスキングパターン配置
 // 引  数：マスキングパターン番号
 
-void SetMaskingPattern(uint8_t *image,int width,int nPatternNo)
+void SetMaskingPattern(uint8_t *image,int width,int nPatternNo,int version)
 {
 	int i, j;
 
@@ -1063,7 +1142,8 @@ void SetMaskingPattern(uint8_t *image,int width,int nPatternNo)
 	{
 		for (j = 0; j < m_nSymbolSize; ++j)
 		{
-			if (! (qr_getmodule(image,width,j,i))) // 機能モジュールを除外
+			if(!is_on_function_area(width,j,i,version)) 
+			//if (!(qr_getmodule(image,width,j,i))) // 機能モジュールを除外
 			//if (! (m_byModuleData[j][i] & 0x20)) // 機能モジュールを除外
 			{
 				bool bMask;
@@ -1103,8 +1183,11 @@ void SetMaskingPattern(uint8_t *image,int width,int nPatternNo)
 					break;
 				}
 
-        int d = qr_getmodule(image,width,j,i) ^ bMask;
-        qr_setmodule(image,width,j,i,d);
+			 // if(is_on_function_area(width,j,i,version)) {
+          int d = qr_getmodule(image,width,j,i) ^ bMask;
+          qr_setmodule(image,width,j,i,d);
+      //  } else {
+      //  }
 //				m_byModuleData[j][i] = (uint8_t)((m_byModuleData[j][i] & 0xfe) | (((m_byModuleData[j][i] & 0x02) > 1) ^ bMask));
 			}
 		}
@@ -1340,21 +1423,12 @@ int CQR_Encode::CountPenalty()
 int main() {
   char   *inputdata = "TESTTESTTESTTEST";
 
-  int outputdata_len;
+  int outputdata_len=16;
   uint8_t outputdata[4096];
-
-//  bool ok = qr_encode_source_data((uint8_t *) inputdata,outputdata,16,4);
-//  bool ok = qr_encode_with_version(0,3,(uint8_t *) inputdata,16,outputdata,&outputdata_len);
 
   int width=25;
                                  //<
-  bool ok = qr_encode_data(3,3,0,2,(uint8_t *) inputdata,16,outputdata,&outputdata_len,&width);
-
-  cout << "data: ";
-  for(int n=0;n<100;n++) {
-    cout << (int) outputdata[n] << ",";
-  }
-  cout << endl;
+  bool ok = qr_encode_data(3,2,0,3,(uint8_t *) inputdata,16,outputdata,&outputdata_len,&width);
 
   if(ok == false) printf("Encoding error\n");
   qr_dumpimage(outputdata,width);
