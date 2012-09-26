@@ -1,6 +1,9 @@
 #ifndef QRENCODEEM_H
 #define QRENCODEEM_H
 
+#include <stdint.h>
+#define NULL 0
+
 // QR Code Version Information
 // QRコードバージョン(型番)情報
 

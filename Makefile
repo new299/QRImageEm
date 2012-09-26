@@ -1,3 +1,3 @@
 
 qr_encodeem: qr_encodeem.cpp main.cpp
-	g++ -g main.cpp qr_encodeem.cpp -o qrem
+	g++ -Os main.cpp qr_encodeem.cpp qr_utils.cpp -o qrem
